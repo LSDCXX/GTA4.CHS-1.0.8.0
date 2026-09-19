@@ -521,36 +521,18 @@ void CFont::PrintCharDispatch(float x, float y, GTAChar chr, bool buffered)
     else
     {
         // 常规菜单：PrintChar(code) 查 code+0x20
-        // ESC 地图区域名：实际汉字 = code+0x40（map_miss.txt）
-        // 两者都在字库时：菜单字体 0/1/3 优先 +0x20，其它字体（地图）优先 +0x40
+        // ESC 地图区域名：实际汉字 = code+0x40
+        // 两者都在字库时：地图 HUD（右上/顶部）用 +0x40，否则 +0x20
         const auto shifted20 = static_cast<GTAChar>(chr + 0x20);
         const auto shifted40 = static_cast<GTAChar>(chr + 0x40);
         const bool has20 = plugin.char_table.Has(shifted20);
         const bool has40 = plugin.char_table.Has(shifted40);
-        const uchar nFont = plugin.game.game_addr.pFont_RenderState->nFont;
-        const bool menu_font = (nFont == 0 || nFont == 1 || nFont == 3);
 
         GTAChar lookup = shifted20;
         if (has20 && has40)
         {
-            // 调用栈读不到有效帧（与菜单同路径 0x88A4A0）。
-            // 地图区域名在屏幕右上/顶部 HUD，菜单文字多在左/中/下。
             const bool map_pos = (x > 0.45f && (y < 0.28f || y > 0.78f));
             lookup = map_pos ? shifted40 : shifted20;
-
-            static std::set<GTAChar> s_amb;
-            if (s_amb.insert(chr).second)
-            {
-                auto path = plugin.GetPluginAsset("map_amb.txt");
-                if (FILE *f = std::fopen(path.string().c_str(), "a"))
-                {
-                    std::fprintf(f, "chr=%04X nFont=%u pick=%04X x=%.4f y=%.4f mappos=%d\n",
-                                 static_cast<unsigned>(chr), static_cast<unsigned>(nFont),
-                                 static_cast<unsigned>(lookup), static_cast<double>(x),
-                                 static_cast<double>(y), map_pos ? 1 : 0);
-                    std::fclose(f);
-                }
-            }
         }
         else if (has40 && !has20)
         {
