@@ -1,4 +1,4 @@
-﻿#include "font.h"
+#include "font.h"
 #include "gta_string.h"
 #include "plugin.h"
 
@@ -148,8 +148,58 @@ float CFont::GetMaxWordWidth(const GTAChar *text)
     return max_word_width;
 }
 
+static void *s_fnGetStringWidthOriginal = nullptr;
+
+static bool HasFontToken(const GTAChar *str)
+{
+    if (str == nullptr)
+    {
+        return false;
+    }
+    for (auto p = str; *p != 0; ++p)
+    {
+        if (*p == '~')
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void CFont::InitGetStringWidthTrampoline()
+{
+    auto start = static_cast<uint8_t *>(injector::aslr_ptr(0x88A690).get());
+    auto cont = static_cast<uint8_t *>(injector::aslr_ptr(0x88A695).get());
+
+    auto tramp =
+        static_cast<uint8_t *>(::VirtualAlloc(nullptr, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+    if (tramp == nullptr)
+    {
+        return;
+    }
+
+    // 原函数入口为 5 字节 mov eax, imm32，MakeJMP 会覆盖这 5 字节
+    tramp[0] = start[0];
+    tramp[1] = start[1];
+    tramp[2] = start[2];
+    tramp[3] = start[3];
+    tramp[4] = start[4];
+    tramp[5] = 0xE9;
+    const auto rel = static_cast<int32_t>(cont - (tramp + 10));
+    std::memcpy(tramp + 6, &rel, sizeof(rel));
+
+    s_fnGetStringWidthOriginal = tramp;
+}
+
 float CFont::GetStringWidthRemake(const GTAChar *str, bool get_all)
 {
+    // 含 ~PAD_*/~ACCEPT~ 等 token 时走原版测宽，避免方向键图标错位；
+    // 纯中文仍用 remake 保证换行/分词。
+    if (str != nullptr && HasFontToken(str) && s_fnGetStringWidthOriginal != nullptr)
+    {
+        return injector::cstd<float(const GTAChar *, bool)>::call(s_fnGetStringWidthOriginal, str, get_all);
+    }
+
     float current_width = 0.0f, max_width = 0.0f;
     bool had_word = false;
     auto render_index = plugin.game.Font_GetRenderIndex();

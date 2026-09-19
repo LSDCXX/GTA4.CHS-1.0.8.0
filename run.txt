@@ -1,0 +1,8 @@
+:: 1) 进入 VS x86 工具链（必须，Ninja + cl.exe）
+call "Q:\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x64_x86
+
+:: 2) 配置（首次或改 CMake/依赖后）
+cmake --preset windows-x86-base
+
+:: 3) 编译 Release（Debug 把 preset 换成 x86-debug）
+cmake --build --preset x86-release

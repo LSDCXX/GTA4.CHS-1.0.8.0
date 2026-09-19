@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "../common/common.h"
 #include "../common/stdinc.h"
 
@@ -143,6 +143,8 @@ public:
 
     static float GetMaxWordWidth(const GTAChar* text);
 
+    // 在 MakeJMP 之前调用：建立原版 GetStringWidth 跳板
+    static void InitGetStringWidthTrampoline();
     static float GetStringWidthRemake(const GTAChar* str, bool get_all);
     static float GetStringWidthGetAllDetour(const GTAChar* str, bool get_all);
 
