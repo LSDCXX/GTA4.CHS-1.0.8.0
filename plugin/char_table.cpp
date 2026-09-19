@@ -1,4 +1,4 @@
-﻿#include "char_table.h"
+#include "char_table.h"
 
 void CCharTable::LoadTable(const std::filesystem::path &filename) {
     BinaryFile file(filename, "rb");
@@ -15,6 +15,11 @@ std::pair<uint, uint> CCharTable::GetCharPos(GTAChar chr) const {
     } else {
         return GetCharPos(L'？');
     }
+}
+
+bool CCharTable::Has(GTAChar chr) const {
+    auto char_it = std::ranges::lower_bound(m_Chars, chr);
+    return char_it != m_Chars.end() && *char_it == chr;
 }
 
 const std::vector<char32_t> &CCharTable::GetChars() const { return m_Chars; }

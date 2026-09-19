@@ -150,7 +150,7 @@ float CFont::GetMaxWordWidth(const GTAChar *text)
 
 static void *s_fnGetStringWidthOriginal = nullptr;
 
-static bool HasFontToken(const GTAChar *str)
+static bool HasButtonLikeToken(const GTAChar *str)
 {
     if (str == nullptr)
     {
@@ -158,9 +158,26 @@ static bool HasFontToken(const GTAChar *str)
     }
     for (auto p = str; *p != 0; ++p)
     {
-        if (*p == '~')
+        if (*p != '~')
+        {
+            continue;
+        }
+        const auto *t = p + 1;
+        // 按键/输入类 token 才需要原版测宽（方向键图标等）
+        if ((t[0] == 'P' && t[1] == 'A' && t[2] == 'D' && t[3] == '_') ||
+            (t[0] == 'A' && t[1] == 'C' && t[2] == 'C' && t[3] == 'E' && t[4] == 'P' && t[5] == 'T') ||
+            (t[0] == 'C' && t[1] == 'A' && t[2] == 'N' && t[3] == 'C' && t[4] == 'E' && t[5] == 'L') ||
+            (t[0] == 'I' && t[1] == 'N' && t[2] == 'P' && t[3] == 'U' && t[4] == 'T' && t[5] == '_'))
         {
             return true;
+        }
+        while (*p != 0 && *p != '~')
+        {
+            ++p;
+        }
+        if (*p == 0)
+        {
+            break;
         }
     }
     return false;
@@ -193,9 +210,9 @@ void CFont::InitGetStringWidthTrampoline()
 
 float CFont::GetStringWidthRemake(const GTAChar *str, bool get_all)
 {
-    // 含 ~PAD_*/~ACCEPT~ 等 token 时走原版测宽，避免方向键图标错位；
-    // 纯中文仍用 remake 保证换行/分词。
-    if (str != nullptr && HasFontToken(str) && s_fnGetStringWidthOriginal != nullptr)
+    // 仅按键/图标 token 走原版测宽（ESC 底栏方向键）。
+    // ~n~ 换行、~g~ 颜色等仍走 remake，否则退出确认框等中文会乱行。
+    if (str != nullptr && HasButtonLikeToken(str) && s_fnGetStringWidthOriginal != nullptr)
     {
         return injector::cstd<float(const GTAChar *, bool)>::call(s_fnGetStringWidthOriginal, str, get_all);
     }
@@ -486,17 +503,10 @@ void CFont::PrintCHSChar(float x, float y, GTAChar chr)
     real_screen_rect.bottom_left.y = flt_proj(0.0f, 74.4912f, relative_char_rect.bottom_left.y,
                                               old_screen_rect.top_right.y, old_screen_rect.bottom_left.y);
 
-    switch (render_state->nFont)
+    // 地图等 UI 可能使用非 0/1/3 的 nFont，必须始终切到中文字库
+    if (CNFont != nullptr)
     {
-    case 0:
-    case 1:
-    case 3: {
         plugin.game.Graphics_SetRenderState(CNFont);
-        break;
-    }
-
-    default:
-        break;
     }
 
     plugin.game.Font_Render2DPrimitive(&real_screen_rect, &texture_rect, render_state->field_18, false);
@@ -504,13 +514,54 @@ void CFont::PrintCHSChar(float x, float y, GTAChar chr)
 
 void CFont::PrintCharDispatch(float x, float y, GTAChar chr, bool buffered)
 {
-    if (plugin.game.game_addr.pFont_RenderState->TokenType != 0 || IsNativeChar(chr + 0x20))
+    if (plugin.game.game_addr.pFont_RenderState->TokenType != 0 || IsNativeChar(chr + 0x20) || IsNativeChar(chr))
     {
         plugin.game.Font_PrintChar(x, y, chr, buffered);
     }
     else
     {
-        if ((chr + 0x20) == 0x3000)
+        // 常规菜单：PrintChar(code) 查 code+0x20
+        // ESC 地图区域名：实际汉字 = code+0x40（map_miss.txt）
+        // 两者都在字库时：菜单字体 0/1/3 优先 +0x20，其它字体（地图）优先 +0x40
+        const auto shifted20 = static_cast<GTAChar>(chr + 0x20);
+        const auto shifted40 = static_cast<GTAChar>(chr + 0x40);
+        const bool has20 = plugin.char_table.Has(shifted20);
+        const bool has40 = plugin.char_table.Has(shifted40);
+        const uchar nFont = plugin.game.game_addr.pFont_RenderState->nFont;
+        const bool menu_font = (nFont == 0 || nFont == 1 || nFont == 3);
+
+        GTAChar lookup = shifted20;
+        if (has20 && has40)
+        {
+            // 调用栈读不到有效帧（与菜单同路径 0x88A4A0）。
+            // 地图区域名在屏幕右上/顶部 HUD，菜单文字多在左/中/下。
+            const bool map_pos = (x > 0.45f && (y < 0.28f || y > 0.78f));
+            lookup = map_pos ? shifted40 : shifted20;
+
+            static std::set<GTAChar> s_amb;
+            if (s_amb.insert(chr).second)
+            {
+                auto path = plugin.GetPluginAsset("map_amb.txt");
+                if (FILE *f = std::fopen(path.string().c_str(), "a"))
+                {
+                    std::fprintf(f, "chr=%04X nFont=%u pick=%04X x=%.4f y=%.4f mappos=%d\n",
+                                 static_cast<unsigned>(chr), static_cast<unsigned>(nFont),
+                                 static_cast<unsigned>(lookup), static_cast<double>(x),
+                                 static_cast<double>(y), map_pos ? 1 : 0);
+                    std::fclose(f);
+                }
+            }
+        }
+        else if (has40 && !has20)
+        {
+            lookup = shifted40;
+        }
+        else if (!has20 && !has40)
+        {
+            lookup = plugin.char_table.Has(chr) ? chr : shifted20;
+        }
+
+        if (lookup == 0x3000)
         {
             return;
         }
@@ -525,6 +576,6 @@ void CFont::PrintCharDispatch(float x, float y, GTAChar chr, bool buffered)
             return;
         }
 
-        PrintCHSChar(x, y, chr + 0x20);
+        PrintCHSChar(x, y, lookup);
     }
 }
